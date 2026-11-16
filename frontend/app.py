@@ -20,6 +20,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.segment_manager import SegmentManager, extract_player_ids_from_criteria, parse_segments_from_response
 from utils.agentcore_client import AgentCoreClient
 
+
+def extract_agent_text(result_obj):
+    """Return the text from an agent response 'result' object.
+
+    Agents on models with adaptive thinking (e.g. Claude Sonnet 5.5) return a
+    content array whose first block can be a reasoning block with no 'text' key.
+    Find the first block that actually has text instead of assuming index 0.
+    """
+    blocks = result_obj.get('content', []) if isinstance(result_obj, dict) else []
+    return next((b['text'] for b in blocks if 'text' in b), '')
+
 # Page config
 st.set_page_config(
     page_title="Player Segmentation Dashboard",
@@ -222,7 +233,7 @@ def show_segment_discovery():
                     response = st.session_state.agentcore_client.invoke_agent(discovery_prompt)
                     # Extract text immediately like the boto3 example
                     if isinstance(response, dict) and 'result' in response:
-                        agent_text = response['result']['content'][0]['text']
+                        agent_text = extract_agent_text(response['result'])
                     else:
                         agent_text = str(response)
                 else:
@@ -456,7 +467,7 @@ def show_agent_chat():
                     # Parse response
                     response_body = response['response'].read().decode('utf-8')
                     response_data = json.loads(response_body)
-                    agent_text = response_data['result']['content'][0]['text']
+                    agent_text = extract_agent_text(response_data['result'])
                     
                 else:
                     st.error("❌ No AgentCore endpoint configured. Please configure in the sidebar.")
@@ -652,7 +663,7 @@ def show_campaign_recommender():
                         result = response['result']
                         if isinstance(result, dict) and 'content' in result:
                             # Extract text from content array
-                            campaign_text = result['content'][0]['text']
+                            campaign_text = extract_agent_text(result)
                             st.write(campaign_text)
                         else:
                             st.write(str(result))

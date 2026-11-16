@@ -66,8 +66,14 @@ def execute_s3_select_query(sql_criteria: str, bucket_name: str, region: str = '
         # Fill NaN values
         merged_df = merged_df.fillna(0)
         
-        # Extract WHERE clause
-        where_clause = sql_criteria.split('WHERE')[1].strip() if 'WHERE' in sql_criteria.upper() else ""
+        # Extract WHERE clause. The agent often passes a bare condition with no
+        # SELECT/WHERE wrapper (e.g. 'platform = "PC" AND total_spend_usd > 50'),
+        # so fall back to treating the whole string as the condition.
+        if 'WHERE' in sql_criteria.upper():
+            idx = sql_criteria.upper().index('WHERE')
+            where_clause = sql_criteria[idx + len('WHERE'):].strip()
+        else:
+            where_clause = sql_criteria.strip()
         
         if not where_clause:
             return merged_df['player_id'].tolist()
@@ -83,8 +89,9 @@ def execute_s3_select_query(sql_criteria: str, bucket_name: str, region: str = '
         conditions = re.sub(r'\bp\.', '', conditions)
         conditions = re.sub(r'\bs\.', '', conditions)
         
-        # Convert SQL operators to pandas
-        conditions = conditions.replace(' = ', ' == ')
+        # Convert a single '=' to '==' (ignoring '==', '>=', '<=', '!=') regardless of spacing.
+        # Must run before column-name wrapping so it does not touch injected merged_df[...] text.
+        conditions = re.sub(r'(?<![<>=!])=(?!=)', ' == ', conditions)
         
         # Handle BETWEEN clauses
         between_pattern = r'(\w+)\s+BETWEEN\s+(\d+(?:\.\d+)?)\s+AND\s+(\d+(?:\.\d+)?)'
@@ -107,10 +114,10 @@ def execute_s3_select_query(sql_criteria: str, bucket_name: str, region: str = '
             return f'{column}.isin({values_list})'
         conditions = re.sub(in_pattern, replace_in_clause, conditions)
         
-        # Add dataframe references to column names
-        for col in merged_df.columns:
-            # Use word boundaries to avoid partial matches
-            pattern = r'\b' + re.escape(col) + r'\b'
+        # Add dataframe references to column names.
+        # Sort longest-first and skip names already wrapped in merged_df["..."].
+        for col in sorted(merged_df.columns, key=len, reverse=True):
+            pattern = r'(?<!["\w])' + re.escape(col) + r'(?!["\w])'
             replacement = f'merged_df["{col}"]'
             conditions = re.sub(pattern, replacement, conditions)
         
